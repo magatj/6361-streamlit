@@ -351,28 +351,101 @@ def build_largest_win_margin_chart(df: pd.DataFrame, reference_value: int) -> go
 def build_sov_chart(df: pd.DataFrame) -> go.Figure:
     chart_df = (
         df[df["Result"].isin(["UW", "WSU"])]
-        .groupby("Result", as_index=False)["SOV Calc"]
-        .mean()
-        .sort_values("SOV Calc")
+        .groupby("Result")["SOV Calc"]
+        .agg(["mean", "count"])
+        .reindex(["UW", "WSU"])
+        .reset_index()
     )
     if chart_df.empty:
         return empty_figure("SOV Calc", 320)
 
+    chart_df["band_60"] = chart_df["mean"] * 0.60
+    chart_df["band_80"] = chart_df["mean"] * 0.80
+
     fig = go.Figure(
         go.Bar(
-            x=chart_df["SOV Calc"],
-            y=chart_df["Result"],
-            orientation="h",
+            x=chart_df["Result"],
+            y=chart_df["mean"],
             marker=dict(color=[RESULT_COLORS[key] for key in chart_df["Result"]]),
-            text=[f"{value:.1f}" for value in chart_df["SOV Calc"]],
+            width=0.58,
+            text=[f"{value:.1f}" for value in chart_df["mean"]],
             textposition="outside",
-            hovertemplate="%{y}<br>Average SOV: %{x:.2f}<extra></extra>",
+            customdata=chart_df[["band_60", "band_80", "count"]].to_numpy(),
+            hovertemplate=(
+                "%{x}<br>"
+                "Average SOV: %{y:.2f}<br>"
+                "60% of Average: %{customdata[0]:.2f}<br>"
+                "80% of Average: %{customdata[1]:.2f}<br>"
+                "Games: %{customdata[2]:.0f}<extra></extra>"
+            ),
         )
     )
-    fig.update_layout(title=dict(text="SOV Calc", x=0.5, xanchor="center"))
-    fig.update_xaxes(title_text="Average Strength of Victory", gridcolor="#EFEFEF", zeroline=False)
-    fig.update_yaxes(title_text="")
-    return configure_chart(fig, 320)
+
+    for idx, row in chart_df.iterrows():
+        fig.add_shape(
+            type="rect",
+            xref="x",
+            yref="y",
+            x0=idx - 0.33,
+            x1=idx + 0.33,
+            y0=float(row["band_60"]),
+            y1=float(row["band_80"]),
+            fillcolor="rgba(70, 70, 70, 0.35)",
+            line=dict(color="rgba(40, 40, 40, 0.95)", width=1),
+            layer="above",
+        )
+        fig.add_shape(
+            type="line",
+            xref="x",
+            yref="y",
+            x0=idx - 0.33,
+            x1=idx + 0.33,
+            y0=float(row["band_80"]),
+            y1=float(row["band_80"]),
+            line=dict(color="rgba(20, 20, 20, 0.95)", width=2),
+            layer="above",
+        )
+        fig.add_shape(
+            type="line",
+            xref="x",
+            yref="y",
+            x0=idx - 0.33,
+            x1=idx + 0.33,
+            y0=float(row["band_60"]),
+            y1=float(row["band_60"]),
+            line=dict(color="rgba(20, 20, 20, 0.95)", width=2),
+            layer="above",
+        )
+        fig.add_annotation(
+            x=row["Result"],
+            y=float(row["band_80"]),
+            text="80% of Average",
+            yshift=8,
+            showarrow=False,
+            font=dict(size=11, color="#7A7A7A"),
+            xshift=-36,
+        )
+        fig.add_annotation(
+            x=row["Result"],
+            y=float(row["band_60"]),
+            text="60% of Average",
+            yshift=-8,
+            showarrow=False,
+            font=dict(size=11, color="#5A5A5A"),
+            xshift=-36,
+        )
+
+    y_max = chart_df["mean"].max() * 1.18
+    fig.update_layout(
+        title=dict(
+            text="Average Points Win Margin<br><sup>Based on Strength of Victory (SOV)</sup>",
+            x=0.5,
+            xanchor="center",
+        ),
+    )
+    fig.update_xaxes(title_text="")
+    fig.update_yaxes(title_text="SOV Calc", range=[0, y_max], gridcolor="#EFEFEF", zeroline=False)
+    return configure_chart(fig, 360)
 
 
 def build_scores_timeline(
