@@ -23,7 +23,7 @@ st.set_page_config(
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_FILE = Path(r"C:\Users\jesse\6361 Streamlit\Apple_Cup_History_AP_Rankings.xlsx")
+DATA_FILE = Path(__file__).parent / "Apple_Cup_History_AP_Rankings.xlsx"
 TWBX_FILE = BASE_DIR / "Apple Cup Games History Stats.twbx"
 LOGO_FILE = BASE_DIR / "apple-cup.jpg"
 
