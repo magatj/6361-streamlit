@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import math
 import zipfile
@@ -12,6 +13,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 import streamlit.components.v1 as components
+from plotly.utils import PlotlyJSONEncoder
 from streamlit_folium import st_folium
 
 
@@ -707,56 +709,228 @@ def build_sankey(df: pd.DataFrame) -> go.Figure:
     if chart_df.empty:
         return empty_figure("Sankey", 540)
 
-    years = sorted(chart_df["Year"].dropna().astype(int).unique().tolist())
+    chart_df["Era"] = (
+        (chart_df["Year"].astype(int) // 10) * 10
+    ).astype(int).astype(str) + "s"
+    eras = sorted(chart_df["Era"].dropna().unique().tolist())
     ranked_statuses = ["Yes", "No"]
     results = ["UW", "WSU"]
-    node_labels = [str(year) for year in years] + ranked_statuses + results
+
+    era_totals = chart_df.groupby("Era").size().reindex(eras, fill_value=0)
+    ranked_totals = chart_df.groupby("Both Teams Ranked").size().reindex(ranked_statuses, fill_value=0)
+    result_totals = chart_df.groupby("Result").size().reindex(results, fill_value=0)
+
+    node_labels = (
+        [f"{era}\n{int(era_totals[era])}" for era in eras]
+        + [f"{status}\n{int(ranked_totals[status])}" for status in ranked_statuses]
+        + [f"{result}\n{int(result_totals[result])}" for result in results]
+    )
     node_colors = (
-        [rgba("#A0CBE8", 0.95) for _ in years]
+        [rgba("#9FB7C9", 0.95) for _ in eras]
         + [rgba(RANKED_COLORS[status], 0.95) for status in ranked_statuses]
         + [rgba(RESULT_COLORS[result], 0.95) for result in results]
     )
-    node_index = {label: idx for idx, label in enumerate(node_labels)}
+    node_keys = eras + ranked_statuses + results
+    node_index = {label: idx for idx, label in enumerate(node_keys)}
 
     links_source: list[int] = []
     links_target: list[int] = []
     links_value: list[int] = []
     links_color: list[str] = []
 
-    year_to_ranked = chart_df.groupby(["Year", "Both Teams Ranked"]).size().reset_index(name="games")
-    for record in year_to_ranked.itertuples(index=False):
-        links_source.append(node_index[str(int(record.Year))])
+    era_to_ranked = chart_df.groupby(["Era", "Both Teams Ranked"]).size().reset_index(name="games")
+    for record in era_to_ranked.itertuples(index=False):
+        links_source.append(node_index[record[0]])
         links_target.append(node_index[record[1]])
         links_value.append(int(record.games))
-        links_color.append(rgba(RANKED_COLORS[record[1]], 0.35))
+        links_color.append(rgba(RANKED_COLORS[record[1]], 0.52 if record[1] == "Yes" else 0.30))
 
     ranked_to_result = chart_df.groupby(["Both Teams Ranked", "Result"]).size().reset_index(name="games")
     for record in ranked_to_result.itertuples(index=False):
         links_source.append(node_index[record[0]])
         links_target.append(node_index[record[1]])
         links_value.append(int(record.games))
-        links_color.append(rgba(RESULT_COLORS[record[1]], 0.35))
+        links_color.append(rgba(RESULT_COLORS[record[1]], 0.42))
+
+    def evenly_spaced_positions(count: int, top: float = 0.04, bottom: float = 0.96) -> list[float]:
+        if count == 1:
+            return [0.5]
+        step = (bottom - top) / (count - 1)
+        return [top + idx * step for idx in range(count)]
+
+    node_x = [0.03] * len(eras) + [0.50] * len(ranked_statuses) + [0.90] * len(results)
+    node_y = evenly_spaced_positions(len(eras), 0.05, 0.95) + [0.28, 0.72] + [0.32, 0.68]
 
     fig = go.Figure(
         go.Sankey(
-            arrangement="snap",
+            arrangement="fixed",
             node=dict(
                 label=node_labels,
                 color=node_colors,
-                pad=10,
-                thickness=16,
-                line=dict(color="white", width=1),
+                pad=11,
+                thickness=20,
+                line=dict(color="rgba(255,255,255,0.92)", width=1.5),
+                x=node_x,
+                y=node_y,
+                hovertemplate="%{label}<extra></extra>",
             ),
             link=dict(
                 source=links_source,
                 target=links_target,
                 value=links_value,
                 color=links_color,
+                hovertemplate="%{value} games<extra></extra>",
             ),
         )
     )
-    fig.update_layout(title=dict(text="Sankey", x=0.5, xanchor="center"))
-    return configure_chart(fig, 540)
+
+    fig.update_layout(
+        title=dict(
+            text="Rivalry Flow<br><sup>Era to ranking status to winner</sup>",
+            x=0.5,
+            xanchor="center",
+        ),
+        margin=dict(l=8, r=8, t=98, b=36),
+        annotations=[
+            dict(x=0.03, y=1.12, xref="paper", yref="paper", text="Era", showarrow=False, font=dict(size=13, color="#606060")),
+            dict(x=0.50, y=1.12, xref="paper", yref="paper", text="Both Ranked", showarrow=False, font=dict(size=13, color="#606060")),
+            dict(x=0.90, y=1.12, xref="paper", yref="paper", text="Winner", showarrow=False, font=dict(size=13, color="#606060")),
+        ],
+    )
+    return configure_chart(fig, 620)
+
+
+def render_interactive_sankey(df: pd.DataFrame) -> None:
+    fig = build_sankey(df)
+    fig_dict = json.loads(json.dumps(fig, cls=PlotlyJSONEncoder))
+    fig_json = json.dumps(fig_dict)
+    html = f"""
+    <div style="font-family: Arial, sans-serif; margin-bottom: 0.4rem; color: #666; font-size: 0.92rem;">
+      Click a flow or node to trace its connected path from left to right. Double-click the chart to reset.
+    </div>
+    <div id="rivalry-sankey" style="width:100%;height:640px;"></div>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script>
+      const figure = {fig_json};
+      const gd = document.getElementById('rivalry-sankey');
+      Plotly.newPlot(gd, figure.data, figure.layout, {{displayModeBar:false, responsive:true}}).then(() => {{
+        const nodeX = gd.data[0].node.x.slice();
+        const nodeColorsOriginal = gd.data[0].node.color.slice();
+        const linkColorsOriginal = gd.data[0].link.color.slice();
+        const sources = gd.data[0].link.source.slice();
+        const targets = gd.data[0].link.target.slice();
+        const nodeDim = 'rgba(215,215,215,0.45)';
+        const linkDim = 'rgba(220,220,220,0.10)';
+
+        function resetColors() {{
+          Plotly.restyle(gd, {{
+            'node.color': [nodeColorsOriginal],
+            'link.color': [linkColorsOriginal]
+          }}, [0]);
+        }}
+
+        function highlightFromNode(nodeIndex) {{
+          const highlightNodes = new Set([nodeIndex]);
+          const highlightLinks = new Set();
+          const xPos = nodeX[nodeIndex];
+
+          if (xPos < 0.2) {{
+            sources.forEach((src, i) => {{
+              if (src === nodeIndex) {{
+                highlightLinks.add(i);
+                highlightNodes.add(targets[i]);
+                sources.forEach((src2, j) => {{
+                  if (src2 === targets[i]) {{
+                    highlightLinks.add(j);
+                    highlightNodes.add(targets[j]);
+                  }}
+                }});
+              }}
+            }});
+          }} else if (xPos < 0.8) {{
+            sources.forEach((src, i) => {{
+              if (src === nodeIndex) {{
+                highlightLinks.add(i);
+                highlightNodes.add(targets[i]);
+              }}
+            }});
+            targets.forEach((tgt, i) => {{
+              if (tgt === nodeIndex) {{
+                highlightLinks.add(i);
+                highlightNodes.add(sources[i]);
+              }}
+            }});
+          }} else {{
+            targets.forEach((tgt, i) => {{
+              if (tgt === nodeIndex) {{
+                highlightLinks.add(i);
+                highlightNodes.add(sources[i]);
+                targets.forEach((tgt2, j) => {{
+                  if (tgt2 === sources[i]) {{
+                    highlightLinks.add(j);
+                    highlightNodes.add(sources[j]);
+                  }}
+                }});
+              }}
+            }});
+          }}
+
+          const nodeColors = nodeColorsOriginal.map((color, i) => highlightNodes.has(i) ? color : nodeDim);
+          const linkColors = linkColorsOriginal.map((color, i) => highlightLinks.has(i) ? color : linkDim);
+          Plotly.restyle(gd, {{
+            'node.color': [nodeColors],
+            'link.color': [linkColors]
+          }}, [0]);
+        }}
+
+        function highlightFromLink(linkIndex) {{
+          const highlightNodes = new Set();
+          const highlightLinks = new Set([linkIndex]);
+          const src = sources[linkIndex];
+          const tgt = targets[linkIndex];
+          highlightNodes.add(src);
+          highlightNodes.add(tgt);
+
+          if (nodeX[src] < 0.2) {{
+            sources.forEach((s, i) => {{
+              if (s === tgt) {{
+                highlightLinks.add(i);
+                highlightNodes.add(targets[i]);
+              }}
+            }});
+          }} else {{
+            targets.forEach((t, i) => {{
+              if (t === src) {{
+                highlightLinks.add(i);
+                highlightNodes.add(sources[i]);
+              }}
+            }});
+          }}
+
+          const nodeColors = nodeColorsOriginal.map((color, i) => highlightNodes.has(i) ? color : nodeDim);
+          const linkColors = linkColorsOriginal.map((color, i) => highlightLinks.has(i) ? color : linkDim);
+          Plotly.restyle(gd, {{
+            'node.color': [nodeColors],
+            'link.color': [linkColors]
+          }}, [0]);
+        }}
+
+        gd.on('plotly_click', function(eventData) {{
+          const pt = eventData.points[0];
+          if (typeof pt.source !== 'undefined' && typeof pt.target !== 'undefined') {{
+            highlightFromLink(pt.pointNumber);
+          }} else {{
+            highlightFromNode(pt.pointNumber);
+          }}
+        }});
+
+        gd.on('plotly_doubleclick', function() {{
+          resetColors();
+        }});
+      }});
+    </script>
+    """
+    components.html(html, height=700)
 
 
 def render_result_legend() -> None:
@@ -977,11 +1151,7 @@ def main() -> None:
             use_container_width=True,
             config={"displayModeBar": False},
         )
-        st.plotly_chart(
-            build_sankey(rivalry_df),
-            use_container_width=True,
-            config={"displayModeBar": False},
-        )
+        render_interactive_sankey(rivalry_df)
         with st.expander("Rivalry Games Table", expanded=False):
             st.dataframe(
                 rivalry_df.sort_values(["Abs Win Margin", "Game Date"], ascending=[False, False])[
