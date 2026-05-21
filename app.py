@@ -26,6 +26,7 @@ st.set_page_config(
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = Path(__file__).parent / "Apple_Cup_History_AP_Rankings.xlsx"
+WEATHER_FILE = BASE_DIR / "apple_cup_daily_weather.csv"
 TWBX_FILE = BASE_DIR / "Apple Cup Games History Stats.twbx"
 LOGO_FILE = BASE_DIR / "apple-cup.jpg"
 
@@ -213,6 +214,14 @@ def load_data() -> pd.DataFrame:
         lambda row: row["UW SOV"] if row["Result"] == "UW" else row["WSU SOV"] if row["Result"] == "WSU" else pd.NA,
         axis=1,
     )
+    weather_df = load_weather_data()
+    if weather_df.empty:
+        df["Mean Temperature (F)"] = pd.NA
+        df["Precipitation (in)"] = pd.NA
+        df["Snowfall (in)"] = pd.NA
+    else:
+        df = df.merge(weather_df, on=["Game Date", "Home Field"], how="left")
+    df["Weather Available"] = df["Mean Temperature (F)"].notna()
     return df.sort_values("Game Date").reset_index(drop=True)
 
 
@@ -225,6 +234,26 @@ def load_logo() -> bytes | None:
             if "Image/apple-cup.jpg" in archive.namelist():
                 return archive.read("Image/apple-cup.jpg")
     return None
+
+
+@st.cache_data(show_spinner=False)
+def load_weather_data() -> pd.DataFrame:
+    if not WEATHER_FILE.exists():
+        return pd.DataFrame(columns=["Game Date", "Home Field", "Mean Temperature (F)", "Precipitation (in)", "Snowfall (in)"])
+
+    weather_df = pd.read_csv(WEATHER_FILE)
+    if weather_df.empty:
+        return pd.DataFrame(columns=["Game Date", "Home Field", "Mean Temperature (F)", "Precipitation (in)", "Snowfall (in)"])
+
+    weather_df["Game Date"] = pd.to_datetime(weather_df["date"], errors="coerce")
+    return weather_df.rename(
+        columns={
+            "home_field": "Home Field",
+            "mean_temperature_f": "Mean Temperature (F)",
+            "precipitation_in": "Precipitation (in)",
+            "snowfall_in": "Snowfall (in)",
+        }
+    )[["Game Date", "Home Field", "Mean Temperature (F)", "Precipitation (in)", "Snowfall (in)"]]
 
 
 def configure_chart(fig: go.Figure, height: int) -> go.Figure:
@@ -290,9 +319,9 @@ def build_total_wins_donut(df: pd.DataFrame, title: str, center_label: str, heig
     return configure_chart(fig, height)
 
 
-def build_probability_chart(df: pd.DataFrame) -> go.Figure:
+def build_probability_chart(df: pd.DataFrame, title: str = "Winning Probability", height: int = 320) -> go.Figure:
     if df.empty:
-        return empty_figure("Winning Probability", 320)
+        return empty_figure(title, height)
 
     counts = df["Result"].value_counts().reindex(["UW", "WSU", "Tie"], fill_value=0)
     probability = (counts / counts.sum()).fillna(0).sort_values(ascending=True)
@@ -310,10 +339,10 @@ def build_probability_chart(df: pd.DataFrame) -> go.Figure:
             hovertemplate="%{y}: %{x:.1%}<extra></extra>",
         )
     )
-    fig.update_layout(title=dict(text="Winning Probability", x=0.5, xanchor="center"))
+    fig.update_layout(title=dict(text=title, x=0.5, xanchor="center"))
     fig.update_xaxes(range=[0, 1], tickformat=".0%", title_text="Probability", gridcolor="#EFEFEF", zeroline=False)
     fig.update_yaxes(title_text="")
-    return configure_chart(fig, 320)
+    return configure_chart(fig, height)
 
 
 def build_largest_win_margin_chart(df: pd.DataFrame, reference_value: int) -> go.Figure:
@@ -966,6 +995,18 @@ def render_summary_metrics(df: pd.DataFrame) -> None:
     metrics[3].metric("Ties", ties)
 
 
+def weather_temperature_bounds(df: pd.DataFrame) -> tuple[int, int] | None:
+    weather_df = df[df["Weather Available"]].copy()
+    if weather_df.empty:
+        return None
+
+    min_temp = int(math.floor(weather_df["Mean Temperature (F)"].min()))
+    max_temp = int(math.ceil(weather_df["Mean Temperature (F)"].max()))
+    if min_temp == max_temp:
+        max_temp += 1
+    return min_temp, max_temp
+
+
 def main() -> None:
     st.markdown(
         """
@@ -1080,6 +1121,45 @@ def main() -> None:
             )
 
         reference_value = st.slider("SOV Parameter", min_value=-27, max_value=48, value=48, key="sov_parameter")
+        weather_bounds = weather_temperature_bounds(filtered_df)
+        if weather_bounds is not None:
+            weather_temp_range = st.slider(
+                "Weather Temperature Range (°F)",
+                min_value=weather_bounds[0],
+                max_value=weather_bounds[1],
+                value=weather_bounds,
+                key="weather_temp_range",
+            )
+            weather_probability_df = filtered_df[
+                filtered_df["Weather Available"]
+                & filtered_df["Mean Temperature (F)"].between(weather_temp_range[0], weather_temp_range[1])
+            ].copy()
+            rain_games = int((weather_probability_df["Precipitation (in)"].fillna(0) > 0).sum())
+            snow_games = int((weather_probability_df["Snowfall (in)"].fillna(0) > 0).sum())
+            avg_temp = weather_probability_df["Mean Temperature (F)"].mean()
+            st.caption(
+                "Historical weather sidecar data is available for Apple Cup sites from 1940 onward. "
+                "Use the temperature range slider to update the weather-based winning probability view."
+            )
+            weather_cols = st.columns([5, 2, 2, 2])
+            with weather_cols[0]:
+                st.plotly_chart(
+                    build_probability_chart(
+                        weather_probability_df,
+                        title=f"Winning Probability in {weather_temp_range[0]}°F to {weather_temp_range[1]}°F Games",
+                    ),
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                )
+            with weather_cols[1]:
+                st.metric("Weather-Matched Games", len(weather_probability_df))
+            with weather_cols[2]:
+                st.metric("Avg Temp", "n/a" if pd.isna(avg_temp) else f"{avg_temp:.1f}°F")
+            with weather_cols[3]:
+                st.metric("Rain / Snow Games", f"{rain_games} / {snow_games}")
+        else:
+            st.info("No weather-matched games are available for the current filters.")
+
         timeline_df = filtered_df[
             filtered_df["Result"].isin(["UW", "WSU"])
             & filtered_df["Year"].between(global_year_range[0], global_year_range[1])
@@ -1100,6 +1180,9 @@ def main() -> None:
                 "WIn Margin",
                 "UW SOV",
                 "WSU SOV",
+                "Mean Temperature (F)",
+                "Precipitation (in)",
+                "Snowfall (in)",
                 "Both Teams Ranked",
                 "OT",
             ]
