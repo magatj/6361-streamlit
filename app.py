@@ -748,7 +748,6 @@ def build_sankey(df: pd.DataFrame) -> go.Figure:
     era_totals = chart_df.groupby("Era").size().reindex(eras, fill_value=0)
     ranked_totals = chart_df.groupby("Both Teams Ranked").size().reindex(ranked_statuses, fill_value=0)
     result_totals = chart_df.groupby("Result").size().reindex(results, fill_value=0)
-
     node_labels = (
         [f"{era}\n{int(era_totals[era])}" for era in eras]
         + [f"{status}\n{int(ranked_totals[status])}" for status in ranked_statuses]
@@ -819,14 +818,16 @@ def build_sankey(df: pd.DataFrame) -> go.Figure:
             x=0.5,
             xanchor="center",
         ),
-        margin=dict(l=8, r=8, t=98, b=36),
+        margin=dict(l=8, r=8, t=124, b=36),
         annotations=[
-            dict(x=0.03, y=1.12, xref="paper", yref="paper", text="Era", showarrow=False, font=dict(size=13, color="#606060")),
-            dict(x=0.50, y=1.12, xref="paper", yref="paper", text="Both Ranked", showarrow=False, font=dict(size=13, color="#606060")),
-            dict(x=0.90, y=1.12, xref="paper", yref="paper", text="Winner", showarrow=False, font=dict(size=13, color="#606060")),
+            dict(x=0.03, y=1.06, xref="paper", yref="paper", text="Era", showarrow=False, font=dict(size=13, color="#606060")),
+            dict(x=0.50, y=1.06, xref="paper", yref="paper", text="Both Ranked", showarrow=False, font=dict(size=13, color="#606060")),
+            dict(x=0.90, y=1.06, xref="paper", yref="paper", text="Winner", showarrow=False, font=dict(size=13, color="#606060")),
         ],
     )
-    return configure_chart(fig, 620)
+    fig = configure_chart(fig, 620)
+    fig.update_layout(margin=dict(l=8, r=8, t=124, b=36))
+    return fig
 
 
 def render_interactive_sankey(df: pd.DataFrame) -> None:
