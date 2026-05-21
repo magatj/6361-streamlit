@@ -36,14 +36,14 @@ NS = {
 }
 
 RESULT_COLORS = {
-    "UW": "#B07AA1",
-    "WSU": "#E15759",
-    "Tie": "#4E79A7",
+    "UW": "#4B2E83",
+    "WSU": "#981E32",
+    "Tie": "#1F77D0",
 }
 RANKED_COLORS = {
-    "Yes": "#59A14F",
-    "No": "#BAB0AC",
-    "Pre-AP Poll": "#F28E2B",
+    "Yes": "#16A34A",
+    "No": "#6B7280",
+    "Pre-AP Poll": "#F97316",
 }
 HOME_FIELD_POSITIONS = {
     "Seattle": {"x": [0.11, 0.31], "y": [0.54, 0.76]},
@@ -771,14 +771,14 @@ def build_sankey(df: pd.DataFrame) -> go.Figure:
         links_source.append(node_index[record[0]])
         links_target.append(node_index[record[1]])
         links_value.append(int(record.games))
-        links_color.append(rgba(RANKED_COLORS[record[1]], 0.52 if record[1] == "Yes" else 0.30))
+        links_color.append(rgba(RANKED_COLORS[record[1]], 0.74 if record[1] == "Yes" else 0.60))
 
     ranked_to_result = chart_df.groupby(["Both Teams Ranked", "Result"]).size().reset_index(name="games")
     for record in ranked_to_result.itertuples(index=False):
         links_source.append(node_index[record[0]])
         links_target.append(node_index[record[1]])
         links_value.append(int(record.games))
-        links_color.append(rgba(RESULT_COLORS[record[1]], 0.42))
+        links_color.append(rgba(RESULT_COLORS[record[1]], 0.72))
 
     def evenly_spaced_positions(count: int, top: float = 0.04, bottom: float = 0.96) -> list[float]:
         if count == 1:
@@ -797,7 +797,7 @@ def build_sankey(df: pd.DataFrame) -> go.Figure:
                 color=node_colors,
                 pad=11,
                 thickness=20,
-                line=dict(color="rgba(255,255,255,0.92)", width=1.5),
+                line=dict(color="rgba(255,255,255,0.96)", width=1.7),
                 x=node_x,
                 y=node_y,
                 hovertemplate="%{label}<extra></extra>",
@@ -1008,6 +1008,32 @@ def weather_temperature_bounds(df: pd.DataFrame) -> tuple[int, int] | None:
     return min_temp, max_temp
 
 
+def clamp_temperature_range(
+    requested_range: tuple[int, int], bounds: tuple[int, int]
+) -> tuple[int, int] | None:
+    low = max(requested_range[0], bounds[0])
+    high = min(requested_range[1], bounds[1])
+    if low > high:
+        return None
+    return low, high
+
+
+def weather_temperature_presets(bounds: tuple[int, int]) -> dict[str, tuple[int, int]]:
+    presets: dict[str, tuple[int, int]] = {"All Weather": bounds}
+    candidate_ranges = [
+        ("Cold", (-40, 32)),
+        ("Chilly", (33, 45)),
+        ("Mild", (46, 59)),
+        ("Warm", (60, 120)),
+    ]
+    for label, requested_range in candidate_ranges:
+        clamped = clamp_temperature_range(requested_range, bounds)
+        if clamped is not None and clamped not in presets.values():
+            presets[label] = clamped
+    presets["Custom"] = bounds
+    return presets
+
+
 def main() -> None:
     st.markdown(
         """
@@ -1124,13 +1150,49 @@ def main() -> None:
         reference_value = st.slider("SOV Parameter", min_value=-27, max_value=48, value=48, key="sov_parameter")
         weather_bounds = weather_temperature_bounds(filtered_df)
         if weather_bounds is not None:
-            weather_temp_range = st.slider(
-                "Weather Temperature Range (°F)",
-                min_value=weather_bounds[0],
-                max_value=weather_bounds[1],
-                value=weather_bounds,
-                key="weather_temp_range",
+            preset_ranges = weather_temperature_presets(weather_bounds)
+            preset_labels = list(preset_ranges.keys())
+            if st.session_state.get("weather_temp_preset") not in preset_labels:
+                st.session_state["weather_temp_preset"] = preset_labels[0]
+
+            st.markdown("**Weather Lens**")
+            st.caption("Choose a quick temperature band, or switch to Custom for a manual range.")
+            selected_weather_preset = st.radio(
+                "Weather temperature view",
+                preset_labels,
+                key="weather_temp_preset",
+                horizontal=True,
+                label_visibility="collapsed",
             )
+
+            if selected_weather_preset == "Custom":
+                default_custom_range = st.session_state.get("weather_temp_range", weather_bounds)
+                weather_temp_range = st.slider(
+                    "Custom Weather Temperature Range (°F)",
+                    min_value=weather_bounds[0],
+                    max_value=weather_bounds[1],
+                    value=default_custom_range,
+                    key="weather_temp_range",
+                )
+            else:
+                weather_temp_range = preset_ranges[selected_weather_preset]
+                st.session_state["weather_temp_range"] = weather_temp_range
+                st.markdown(
+                    f"""
+                    <div style="padding:0.75rem 0.95rem;border:1px solid #E6E6E6;border-radius:14px;
+                                background:linear-gradient(135deg,#FAFAFA 0%,#F2F6FB 100%);
+                                margin:0.2rem 0 0.8rem 0;">
+                      <div style="font-size:0.82rem;color:#667085;text-transform:uppercase;letter-spacing:0.04em;">
+                        Active Temperature Band
+                      </div>
+                      <div style="font-size:1.2rem;font-weight:700;color:#24324A;margin-top:0.2rem;">
+                        {selected_weather_preset}: {weather_temp_range[0]}°F to {weather_temp_range[1]}°F
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
             weather_probability_df = filtered_df[
                 filtered_df["Weather Available"]
                 & filtered_df["Mean Temperature (F)"].between(weather_temp_range[0], weather_temp_range[1])
@@ -1140,7 +1202,7 @@ def main() -> None:
             avg_temp = weather_probability_df["Mean Temperature (F)"].mean()
             st.caption(
                 "Historical weather sidecar data is available for Apple Cup sites from 1940 onward. "
-                "Use the temperature range slider to update the weather-based winning probability view."
+                "The weather lens updates the weather-based winning probability view."
             )
             weather_cols = st.columns([5, 2, 2, 2])
             with weather_cols[0]:
@@ -1233,7 +1295,7 @@ def main() -> None:
         st.plotly_chart(
             build_both_ranked_square(rivalry_df),
             use_container_width=True,
-            config={"displayModeBar": False},
+            config={"displayModeBar": False, "staticPlot": True},
         )
         render_interactive_sankey(rivalry_df)
         with st.expander("Rivalry Games Table", expanded=False):
