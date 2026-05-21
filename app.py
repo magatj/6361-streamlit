@@ -570,12 +570,13 @@ def build_scores_timeline_animated(df: pd.DataFrame, year_range: tuple[int, int]
     fig.add_hline(y=-reference_value, line_dash="dot", line_color="#A4A4A4", opacity=0.6)
     fig.update_layout(
         title=dict(text="Scores Timeline", x=0.5, xanchor="center"),
+        margin=dict(l=8, r=8, t=150, b=36),
         updatemenus=[
             {
                 "type": "buttons",
                 "showactive": False,
                 "x": 0.01,
-                "y": 1.16,
+                "y": 1.24,
                 "xanchor": "left",
                 "yanchor": "top",
                 "direction": "left",
@@ -613,7 +614,7 @@ def build_scores_timeline_animated(df: pd.DataFrame, year_range: tuple[int, int]
                 "active": 0,
                 "x": 0.12,
                 "len": 0.84,
-                "y": 1.12,
+                "y": 1.18,
                 "xanchor": "left",
                 "yanchor": "top",
                 "currentvalue": {"prefix": "Game: ", "font": {"size": 14, "color": "#444444"}},
@@ -637,7 +638,9 @@ def build_scores_timeline_animated(df: pd.DataFrame, year_range: tuple[int, int]
     )
     fig.update_xaxes(title_text="Year of Game Date", tickmode="array", tickvals=tick_values, gridcolor="#F4F4F4")
     fig.update_yaxes(title_text="Win Margin", gridcolor="#EFEFEF", zeroline=False)
-    return configure_chart(fig, 560)
+    fig = configure_chart(fig, 560)
+    fig.update_layout(margin=dict(l=8, r=8, t=150, b=36))
+    return fig
 
 
 def render_scores_timeline_animation(df: pd.DataFrame, year_range: tuple[int, int], reference_value: int) -> None:
